@@ -1,0 +1,6 @@
+inventory.ini
+*.pem
+*.key
+*.pub
+*.log
+__pycache__/
