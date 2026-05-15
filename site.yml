@@ -1,0 +1,137 @@
+---
+- name: Deploy Lab4 HTTP service
+  hosts: lab4
+  become: true
+
+  vars:
+    service_name: lab4-service
+    service_root: /opt/lab4-service
+    service_html: /opt/lab4-service/html
+    service_port: 8000
+    student_name: "Козловская Ксения"
+
+  tasks:
+    - name: Install required packages
+      apt:
+        name:
+          - python3
+          - curl
+        state: present
+        update_cache: true
+
+    - name: Create service root directory
+      file:
+        path: "{{ service_root }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Create html directory
+      file:
+        path: "{{ service_html }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+
+    - name: Deploy index.html
+      copy:
+        dest: "{{ service_html }}/index.html"
+        owner: www-data
+        group: www-data
+        mode: "0644"
+        content: |
+          <!DOCTYPE html>
+          <html lang="ru">
+          <head>
+              <meta charset="UTF-8">
+              <title>Lab4 Service</title>
+          </head>
+          <body>
+              <h1>Лабораторная работа №4</h1>
+              <p>DevOps-автоматизация: systemd, bash-скрипты и Ansible</p>
+              <p>Студент: {{ student_name }}</p>
+          </body>
+          </html>
+
+    - name: Deploy service.sh
+      copy:
+        dest: "{{ service_root }}/service.sh"
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          SERVICE_DIR="{{ service_html }}"
+          PORT="{{ service_port }}"
+
+          cd "$SERVICE_DIR"
+
+          echo "Starting lab4 HTTP service on port $PORT"
+          python3 -m http.server "$PORT"
+
+    - name: Deploy healthcheck script
+      copy:
+        dest: /usr/local/bin/lab4-healthcheck.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          URL="http://127.0.0.1:{{ service_port }}"
+
+          STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
+
+          if [ "$STATUS_CODE" = "200" ]; then
+              echo "OK: service is available, HTTP code $STATUS_CODE"
+              exit 0
+          else
+              echo "FAIL: service is unavailable, HTTP code $STATUS_CODE"
+              exit 1
+          fi
+
+    - name: Deploy systemd unit
+      copy:
+        dest: "/etc/systemd/system/{{ service_name }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Lab4 Python HTTP Service
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=www-data
+          WorkingDirectory={{ service_html }}
+          ExecStart={{ service_root }}/service.sh
+          Restart=on-failure
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+      notify:
+        - Reload systemd
+
+    - name: Enable and start service
+      systemd:
+        name: "{{ service_name }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Check service with HTTP request
+      uri:
+        url: "http://127.0.0.1:{{ service_port }}"
+        status_code: 200
+
+  handlers:
+    - name: Reload systemd
+      systemd:
+        daemon_reload: true
